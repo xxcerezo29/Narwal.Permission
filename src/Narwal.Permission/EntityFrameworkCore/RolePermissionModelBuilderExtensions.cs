@@ -8,14 +8,18 @@ namespace Narwal.Permission.EntityFrameworkCore;
 
 public static class RolePermissionModelBuilderExtensions
 {
-    public static ModelBuilder ConfigureRolePermissionModel<TUserId>(this ModelBuilder modelBuilder)
+    public static ModelBuilder ConfigureRolePermissionModel<TUserId>(
+        this ModelBuilder modelBuilder,
+        RolePermissionTableNames? tableNames = null)
         where TUserId : notnull
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
+        tableNames ??= new RolePermissionTableNames();
+        tableNames.Validate();
 
         modelBuilder.Entity<Role>(entity =>
         {
-            entity.ToTable("NarwalRoles");
+            entity.ToTable(tableNames.Roles);
             entity.HasKey(role => role.Code);
             entity.Property(role => role.Code)
                 .HasMaxLength(RolePermissionCode.MaximumLength)
@@ -28,7 +32,7 @@ public static class RolePermissionModelBuilderExtensions
 
         modelBuilder.Entity<PermissionEntity>(entity =>
         {
-            entity.ToTable("NarwalPermissions");
+            entity.ToTable(tableNames.Permissions);
             entity.HasKey(permission => permission.Code);
             entity.Property(permission => permission.Code)
                 .HasMaxLength(RolePermissionCode.MaximumLength)
@@ -41,7 +45,7 @@ public static class RolePermissionModelBuilderExtensions
 
         modelBuilder.Entity<RolePermissionGrant>(entity =>
         {
-            entity.ToTable("NarwalRolePermissions");
+            entity.ToTable(tableNames.RolePermissions);
             entity.HasKey(grant => new { grant.RoleCode, grant.PermissionCode });
             entity.Property(grant => grant.RoleCode)
                 .HasMaxLength(RolePermissionCode.MaximumLength)
@@ -61,7 +65,7 @@ public static class RolePermissionModelBuilderExtensions
 
         modelBuilder.Entity<UserRole<TUserId>>(entity =>
         {
-            entity.ToTable("NarwalUserRoles");
+            entity.ToTable(tableNames.UserRoles);
             entity.HasKey(assignment => new { assignment.UserId, assignment.RoleCode });
             entity.Property(assignment => assignment.UserId).IsRequired();
             entity.Property(assignment => assignment.RoleCode)
@@ -75,7 +79,7 @@ public static class RolePermissionModelBuilderExtensions
 
         modelBuilder.Entity<UserPermission<TUserId>>(entity =>
         {
-            entity.ToTable("NarwalUserPermissions");
+            entity.ToTable(tableNames.UserPermissions);
             entity.HasKey(assignment => new { assignment.UserId, assignment.PermissionCode });
             entity.Property(assignment => assignment.UserId).IsRequired();
             entity.Property(assignment => assignment.PermissionCode)
@@ -93,7 +97,8 @@ public static class RolePermissionModelBuilderExtensions
     public static ModelBuilder ConfigureRolePermissionModel<TUserEntity, TUserId>(
         this ModelBuilder modelBuilder,
         Expression<Func<TUserEntity, IEnumerable<UserRole<TUserId>>?>> roleAssignments,
-        Expression<Func<TUserEntity, IEnumerable<UserPermission<TUserId>>?>> permissionAssignments)
+        Expression<Func<TUserEntity, IEnumerable<UserPermission<TUserId>>?>> permissionAssignments,
+        RolePermissionTableNames? tableNames = null)
         where TUserEntity : class
         where TUserId : notnull
     {
@@ -101,7 +106,7 @@ public static class RolePermissionModelBuilderExtensions
         ArgumentNullException.ThrowIfNull(roleAssignments);
         ArgumentNullException.ThrowIfNull(permissionAssignments);
 
-        ConfigureRolePermissionModel<TUserId>(modelBuilder);
+        ConfigureRolePermissionModel<TUserId>(modelBuilder, tableNames);
 
         var userEntity = modelBuilder.Entity<TUserEntity>();
         userEntity.HasMany(roleAssignments)

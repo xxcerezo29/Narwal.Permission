@@ -46,6 +46,44 @@ public sealed class RolePermissionModelTests
     }
 
     [Fact]
+    public void Table_names_can_be_customized_in_id_only_mode()
+    {
+        var options = new DbContextOptionsBuilder<CustomTableNamesDbContext>()
+            .UseSqlite("Data Source=:memory:")
+            .Options;
+        using var context = new CustomTableNamesDbContext(options);
+
+        AssertTableNames(context);
+    }
+
+    [Fact]
+    public void Table_names_can_be_customized_in_relationship_mode()
+    {
+        var options = new DbContextOptionsBuilder<CustomRelationshipTableNamesDbContext>()
+            .UseSqlite("Data Source=:memory:")
+            .Options;
+        using var context = new CustomRelationshipTableNamesDbContext(options);
+
+        AssertTableNames(context);
+        var userType = context.Model.FindEntityType(typeof(ApplicationUser))!;
+        Assert.NotNull(userType.FindNavigation(nameof(ApplicationUser.RoleAssignments)));
+        Assert.NotNull(userType.FindNavigation(nameof(ApplicationUser.PermissionAssignments)));
+    }
+
+    private static void AssertTableNames(DbContext context)
+    {
+        Assert.Equal("AppRoles", context.Model.FindEntityType(typeof(RoleEntity))!.GetTableName());
+        Assert.Equal("AppPermissions", context.Model.FindEntityType(typeof(PermissionEntity))!.GetTableName());
+        Assert.Equal(
+            "AppRolePermissions",
+            context.Model.FindEntityType(typeof(Narwal.Permission.Domain.RolePermissionGrant))!.GetTableName());
+        Assert.Equal("AppUserRoles", context.Model.FindEntityType(typeof(UserRoleEntity))!.GetTableName());
+        Assert.Equal(
+            "AppUserPermissions",
+            context.Model.FindEntityType(typeof(UserPermissionEntity))!.GetTableName());
+    }
+
+    [Fact]
     public async Task Relationship_mode_adds_user_foreign_keys_and_cascades_assignment_deletes()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -119,6 +157,41 @@ public sealed class RolePermissionModelTests
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.ConfigureRolePermissionModel<Guid>();
+        }
+    }
+
+    private sealed class CustomTableNamesDbContext(
+        DbContextOptions<CustomTableNamesDbContext> options) : DbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.ConfigureRolePermissionModel<Guid>(new RolePermissionTableNames
+            {
+                Roles = "AppRoles",
+                Permissions = "AppPermissions",
+                RolePermissions = "AppRolePermissions",
+                UserRoles = "AppUserRoles",
+                UserPermissions = "AppUserPermissions"
+            });
+        }
+    }
+
+    private sealed class CustomRelationshipTableNamesDbContext(
+        DbContextOptions<CustomRelationshipTableNamesDbContext> options) : DbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.ConfigureRolePermissionModel<ApplicationUser, Guid>(
+                user => user.RoleAssignments,
+                user => user.PermissionAssignments,
+                new RolePermissionTableNames
+                {
+                    Roles = "AppRoles",
+                    Permissions = "AppPermissions",
+                    RolePermissions = "AppRolePermissions",
+                    UserRoles = "AppUserRoles",
+                    UserPermissions = "AppUserPermissions"
+                });
         }
     }
 
