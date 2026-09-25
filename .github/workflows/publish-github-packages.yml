@@ -1,0 +1,58 @@
+name: Publish GitHub Packages release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Pack and publish
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      REPOSITORY_URL: https://github.com/${{ github.repository }}
+      GITHUB_NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+      NUGET_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v7
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Pack release version
+        shell: bash
+        run: |
+          case "$RELEASE_TAG" in
+            v*) PACKAGE_VERSION="${RELEASE_TAG#v}" ;;
+            *) echo "Release tag must start with v (for example v0.1.0)." >&2; exit 1 ;;
+          esac
+          dotnet pack src/Narwal.Permission/Narwal.Permission.csproj \
+            --configuration Release \
+            --output artifacts \
+            -p:PackageVersion="$PACKAGE_VERSION" \
+            -p:RepositoryUrl="$REPOSITORY_URL"
+
+      - name: Configure GitHub Packages source
+        shell: bash
+        run: >-
+          dotnet nuget add source "$GITHUB_NUGET_SOURCE"
+          --name github
+          --username "$GITHUB_ACTOR"
+          --password "$NUGET_AUTH_TOKEN"
+          --store-password-in-clear-text
+
+      - name: Push package to GitHub Packages
+        shell: bash
+        run: >-
+          dotnet nuget push artifacts/*.nupkg
+          --source github
+          --api-key "$NUGET_AUTH_TOKEN"
+          --skip-duplicate

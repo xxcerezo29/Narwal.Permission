@@ -1,0 +1,29 @@
+name: Pull request validation
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore RolePermission.sln
+
+      - name: Build Release
+        run: dotnet build RolePermission.sln --configuration Release --no-restore
+
+      - name: Test Release
+        run: dotnet test RolePermission.sln --configuration Release --no-build --no-restore

@@ -1,0 +1,26 @@
+# Build outputs
+**/bin/
+**/obj/
+artifacts/
+TestResults/
+*.trx
+.superpowers/
+docs/superpowers/
+
+# IDE and user-specific files
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet packages and local package configuration
+*.nupkg
+*.snupkg
+NuGet.Config.local
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak

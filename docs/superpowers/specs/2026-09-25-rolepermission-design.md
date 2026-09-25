@@ -1,7 +1,7 @@
 # Narwal.Permission NuGet Package Design
 
 **Date:** 2026-09-25  
-**Status:** Design for user review
+**Status:** Approved by user; implementation complete
 
 ## Purpose
 
@@ -17,7 +17,7 @@ The intended model follows Spatie Laravel Permission's core distinction: permiss
 - Use immutable string `Code` values as role and permission primary keys, so seed data and references are deterministic without generated `Guid` or integer keys.
 - Support any EF Core compatible, non-null user ID type without owning authentication or the user table, with optional relationships to an application's user entity.
 - Provide role and permission management APIs, direct user permission grants, effective permission checks, and ASP.NET Core policy integration.
-- Initialize a Git repository with contribution guidance, pull request build/test checks, and release-triggered NuGet publishing.
+- Initialize a Git repository with contribution guidance, pull request build/test checks, and release-triggered publishing to GitHub Packages' NuGet registry.
 
 ## V1 scope
 
@@ -46,7 +46,7 @@ An opt-in model-builder overload accepts the application's user entity type and 
 
 Package-owned domain entities encapsulate their state. `Code` and `Name` have no public setters; creation, display-name changes, permission grants, and removals go through constructors/factories and named domain methods. Collection navigations use private backing fields and read-only views. EF Core is configured to materialize through private constructors and access backing fields. `IRolePermissionManager<TUserId>` is the supported write API for role and user assignments; consumers may query the optional user-side navigations without mutating assignment collections. This follows EF Core's documented backing-field pattern for read-only collection navigations ([navigations](https://learn.microsoft.com/en-us/ef/core/modeling/relationships/navigations), [backing fields](https://learn.microsoft.com/en-us/ef/core/modeling/backing-field)).
 
-The application registers the package against its context and key type with `AddRolePermission<TContext, TUserId>()`. ASP.NET Core integration maps the authenticated `ClaimsPrincipal` to `TUserId` through an `IRolePermissionUserIdResolver<TUserId>`. The default resolver reads `ClaimTypes.NameIdentifier` for string keys; applications with another key type or claim convention configure a resolver.
+The application registers the package against its context and key type with `AddRolePermission<TContext, TUserId>()`. ASP.NET Core integration maps the authenticated `ClaimsPrincipal` to `TUserId` through an `IRolePermissionUserIdResolver<TUserId>`. The default resolver reads `ClaimTypes.NameIdentifier` for string keys; applications with another key type or claim convention configure a resolver. The options callback returns a `(Success, UserId)` tuple so value-type and reference-type user keys share one unambiguous contract.
 
 The authorization handler asks the permission evaluator to check the current user against the application `DbContext`. A missing/unresolvable user ID or missing permission denies access. Direct user permissions and permissions inherited through roles are both effective. Checks query the database; V1 has no cross-request permission cache, so assignments take effect on subsequent checks after the application saves them.
 
@@ -94,11 +94,11 @@ protected override void OnModelCreating(ModelBuilder modelBuilder)
 builder.Services.AddRolePermission<AppDbContext, Guid>(options =>
     options.UserIdResolver = principal =>
         Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
-            ? id
-            : null);
+            ? (true, id)
+            : (false, default));
 
 builder.Services.AddAuthorization();
-builder.Services.AddRolePermissionAuthorization();
+builder.Services.AddRolePermissionAuthorization<Guid>();
 ```
 
 Consumers use an `IRolePermissionManager<TUserId>` for management operations and an `IPermissionChecker<TUserId>` for application checks. Management operations are asynchronous and accept `CancellationToken`. They take role and permission codes as identifiers plus display names when creating or renaming. Missing codes in management operations produce typed not-found errors; permission checks return `false` for unknown codes or users without a matching grant.
@@ -111,17 +111,17 @@ The repository uses `main` as its initial branch, a .NET `.gitignore`, a root so
 
 The GitHub Actions pull request workflow triggers on `pull_request` only. It installs the .NET 10 SDK and runs restore, Release build, and tests for the solution. It does not run on ordinary branch pushes. Tests cover management behavior, direct and inherited permission evaluation, user ID resolution, authorization policies, and EF Core model/persistence behavior using SQLite in-memory as a relational test provider.
 
-A separate GitHub Actions workflow triggers only when a GitHub Release is published. The release tag is the package version and must use `vMAJOR.MINOR.PATCH` or a NuGet-compatible prerelease suffix. The workflow packs the tagged commit and publishes to nuget.org; it does not rerun the pull request test suite. Publishing uses NuGet Trusted Publishing with GitHub OIDC and a short-lived token. Release instructions document the one-time NuGet.org trusted-publisher policy setup, version-tag procedure, and required GitHub release action.
+A separate GitHub Actions workflow triggers only when a GitHub Release is published. The release tag is the package version and must use `vMAJOR.MINOR.PATCH` or a NuGet-compatible prerelease suffix. The workflow packs the tagged commit and publishes to GitHub Packages at `https://nuget.pkg.github.com/<owner>/index.json`; it does not rerun the pull request test suite. The owner is derived from `github.repository_owner`, and the package metadata must associate the artifact with the source repository. The workflow uses the repository's `GITHUB_TOKEN` with `contents: read` and `packages: write`; it does not require a NuGet.org API key or OIDC trusted-publishing setup. Release instructions document the repository/package association, package visibility and access, version-tag procedure, and GitHub release action.
 
 ## Risks and constraints
 
-- The NuGet package ID must be available to claim on nuget.org before the first publication.
+- GitHub Packages NuGet packages are private by default. If the package is intended for public consumption, repository owners must make the published package public and document that consumers of private packages need GitHub Packages authentication.
 - Role and permission codes become persistent primary keys, so changing a code requires a deliberate data migration and updates to seeders/policy references; display names are the supported renameable labels.
 - User ID key types must be supported by the selected EF Core database provider. Non-string IDs require a configured principal resolver for ASP.NET Core policy checks.
 - In ID-only mode, the database cannot enforce that an assignment references an existing user, so the application must remove stale assignments when it deletes a user. Relationship mode adds user foreign keys and lets EF/database constraints manage assignment lifetime.
 - Because the application owns `SaveChangesAsync`, permission/role changes are not effective until the host saves the `DbContext`.
 - Permission checks hit the database in V1. Caching can be added later if measured workloads require it, with explicit invalidation behavior for assignment changes.
-- NuGet Trusted Publishing requires a one-time policy configured on the NuGet.org account for the eventual GitHub owner, repository, and release workflow file.
+- GitHub Actions can publish with `GITHUB_TOKEN` when the package is associated with the workflow repository. The package's repository URL and the registry namespace must match the actual GitHub repository owner; the owner is not fixed in this design because the repository has no configured remote yet.
 
 ## References
 
@@ -129,4 +129,5 @@ A separate GitHub Actions workflow triggers only when a GitHub Release is publis
 - [Spatie roles vs permissions guidance](https://spatie.be/docs/laravel-permission/v8/best-practices/roles-vs-permissions)
 - [EF Core relationship configuration](https://learn.microsoft.com/en-us/ef/core/modeling/relationships/one-to-many)
 - [ASP.NET Core policy-based authorization](https://learn.microsoft.com/en-us/aspnet/core/security/authorization/policies?view=aspnetcore-10.0)
-- [NuGet Trusted Publishing](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing)
+- [GitHub Docs: Working with the NuGet registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-nuget-registry)
+- [GitHub Docs: Building and testing .NET](https://docs.github.com/en/actions/tutorials/build-and-test-code/net)
