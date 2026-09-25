@@ -42,6 +42,21 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
 The default mapping stores user IDs on assignment rows and does not add a foreign key to the application's user table. Keep the app user model free of role or permission assignment collection navigations in this mode; EF Core conventions can discover those navigations. The app remains responsible for cleaning up stale assignments when it deletes a user.
 
+Table names are configurable in both mapping modes. Any names you do not override keep their defaults:
+
+```csharp
+modelBuilder.ConfigureRolePermissionModel<Guid>(new RolePermissionTableNames
+{
+    Roles = "AppRoles",
+    Permissions = "AppPermissions",
+    RolePermissions = "AppRolePermissions",
+    UserRoles = "AppUserRoles",
+    UserPermissions = "AppUserPermissions"
+});
+```
+
+The same `RolePermissionTableNames` argument can be passed as the third argument to the optional user relationship overload.
+
 The application uses its regular EF Core migrations. For example:
 
 ```sh
