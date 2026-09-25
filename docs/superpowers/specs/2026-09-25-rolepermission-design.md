@@ -1,4 +1,4 @@
-# RolePermission NuGet Package Design
+# Narwal.Permission NuGet Package Design
 
 **Date:** 2026-09-25  
 **Status:** Design for user review
@@ -11,7 +11,7 @@ The intended model follows Spatie Laravel Permission's core distinction: permiss
 
 ## Goals
 
-- Publish one NuGet package with the ID `RolePermission` and MIT license.
+- Publish one NuGet package with the ID and root namespace `Narwal.Permission` and MIT license.
 - Target .NET 10 and EF Core 10.
 - Integrate RBAC entities into an application's existing EF Core `DbContext` and migrations.
 - Use immutable string `Code` values as role and permission primary keys, so seed data and references are deterministic without generated `Guid` or integer keys.
@@ -34,7 +34,7 @@ V1 does not include an authentication system, Identity-specific user model, tena
 
 ## Package architecture
 
-The package is one NuGet artifact organized internally into three areas:
+The package is one NuGet artifact organized internally into three areas. Its NuGet ID, assembly name, and root namespace are `Narwal.Permission`.
 
 1. **RBAC management and evaluation** exposes services for role/permission assignment and effective checks.
 2. **EF Core integration** supplies RBAC entities and a model-builder extension. The application calls `modelBuilder.ConfigureRolePermissionModel<TUserId>()` from its existing `DbContext`, uses its own migration workflow, and supplies its normal EF Core database provider.
@@ -107,7 +107,7 @@ The manager includes `CreateRoleAsync(code, name)`, `CreatePermissionAsync(code,
 
 ## Repository and contribution workflow
 
-The repository uses `main` as its initial branch, a .NET `.gitignore`, a root solution, one library project under `src/RolePermission`, and test projects under `tests/`. The root contains `README.md`, `LICENSE` (MIT), `CONTRIBUTING.md`, a pull request template, and release instructions. The README includes installation, setup, management, and authorization examples.
+The repository uses `main` as its initial branch, a .NET `.gitignore`, a root solution, one library project under `src/Narwal.Permission`, and test projects under `tests/`. The root contains `README.md`, `LICENSE` (MIT), `CONTRIBUTING.md`, a pull request template, and release instructions. The README includes installation, setup, management, and authorization examples, including `dotnet add package Narwal.Permission`.
 
 The GitHub Actions pull request workflow triggers on `pull_request` only. It installs the .NET 10 SDK and runs restore, Release build, and tests for the solution. It does not run on ordinary branch pushes. Tests cover management behavior, direct and inherited permission evaluation, user ID resolution, authorization policies, and EF Core model/persistence behavior using SQLite in-memory as a relational test provider.
 
