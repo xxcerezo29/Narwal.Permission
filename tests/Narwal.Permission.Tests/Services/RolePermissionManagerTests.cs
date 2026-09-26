@@ -191,4 +191,19 @@ public sealed class RolePermissionManagerTests : IAsyncLifetime
         Assert.Single(await _context.Set<UserRoleEntity>().ToListAsync());
         Assert.Single(await _context.Set<UserPermissionEntity>().ToListAsync());
     }
+
+    [Fact]
+    public async Task Manager_without_audit_mapping_continues_to_manage_roles_and_assignments()
+    {
+        await _manager.CreateRoleAsync("editor", "Editor");
+        await _manager.CreatePermissionAsync("posts.edit", "Edit posts");
+        await _manager.GrantPermissionToRoleAsync("editor", "posts.edit");
+        await _context.SaveChangesAsync();
+
+        Assert.Null(_context.Model.FindEntityType(
+            typeof(Narwal.Permission.Domain.RolePermissionAuditEntry<Guid>)));
+        Assert.Equal(1, await _context.Set<RoleEntity>().CountAsync());
+        Assert.Equal(1, await _context.Set<PermissionEntity>().CountAsync());
+        Assert.Equal(1, await _context.Set<RolePermissionGrantEntity>().CountAsync());
+    }
 }

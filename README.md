@@ -141,6 +141,131 @@ The manager also provides `RenameRoleAsync`, `RenamePermissionAsync`, `DeleteRol
 
 The manager never calls `SaveChangesAsync`. Save changes and transaction boundaries remain with the host application, so its other tracked updates can be committed together.
 
+## Optional audit history
+
+Audit history is disabled by default. The ordinary `ConfigureRolePermissionModel` call does not add an audit entity or table. To enable it, explicitly call `ConfigureRolePermissionAudit` from `OnModelCreating`; the application owns the audit table's migrations and schema.
+
+The audit table defaults to `NarwalPermissionAuditEntries`. Pass the same table-name configuration to both model calls when overriding table names:
+
+```csharp
+var tableNames = new RolePermissionTableNames
+{
+    Roles = "AppRoles",
+    Permissions = "AppPermissions",
+    AuditEntries = "AppPermissionHistory"
+};
+
+modelBuilder.ConfigureRolePermissionModel<Guid>(tableNames);
+modelBuilder.ConfigureRolePermissionAudit<Guid>(tableNames);
+```
+
+The ID-only mapping stores user ID snapshots without a foreign key to the app's user table:
+
+```csharp
+modelBuilder.ConfigureRolePermissionAudit<Guid>();
+```
+
+EF Core caches models by DbContext type. Configure a stable table-name set for each model; applications that vary table names by context instance need to include those values in their model cache key.
+
+### Actor IDs
+
+Register an actor provider to attach the current actor ID to manager-generated events. It is optional; if no actor is available, return `false`. The `Try` shape preserves a valid `Guid.Empty` ID separately from the absence of an actor:
+
+```csharp
+using System.Diagnostics.CodeAnalysis;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
+using Narwal.Permission.Services;
+
+public sealed class RequestAuditActorProvider(IHttpContextAccessor accessor)
+    : IRolePermissionAuditActorProvider<Guid>
+{
+    public bool TryGetActorUserId([MaybeNullWhen(false)] out Guid actorUserId)
+    {
+        var value = accessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (Guid.TryParse(value, out actorUserId))
+        {
+            return true;
+        }
+
+        actorUserId = default;
+        return false;
+    }
+}
+```
+
+Register the app provider with dependency injection. `AddRolePermission` keeps a provider registered by the application:
+
+```csharp
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IRolePermissionAuditActorProvider<Guid>, RequestAuditActorProvider>();
+builder.Services.AddRolePermission<AppDbContext, Guid>();
+```
+
+### Optional user relationships
+
+Audit records can also expose read-only collections on the app user. Add the two collections to the user model:
+
+```csharp
+using Narwal.Permission.Domain;
+
+public sealed class AppUser
+{
+    private readonly List<UserRole<Guid>> _roleAssignments = [];
+    private readonly List<UserPermission<Guid>> _permissionAssignments = [];
+    private readonly List<RolePermissionAuditEntry<Guid>> _auditEventsAsActor = [];
+    private readonly List<RolePermissionAuditEntry<Guid>> _auditEventsAbout = [];
+
+    public Guid Id { get; private set; }
+    public IEnumerable<UserRole<Guid>> RoleAssignments => _roleAssignments.AsReadOnly();
+    public IEnumerable<UserPermission<Guid>> PermissionAssignments => _permissionAssignments.AsReadOnly();
+    public IEnumerable<RolePermissionAuditEntry<Guid>> AuditEventsAsActor => _auditEventsAsActor.AsReadOnly();
+    public IEnumerable<RolePermissionAuditEntry<Guid>> AuditEventsAbout => _auditEventsAbout.AsReadOnly();
+}
+```
+
+Configure those collections after the normal RBAC model:
+
+```csharp
+modelBuilder.ConfigureRolePermissionModel<AppUser, Guid>(
+    user => user.RoleAssignments,
+    user => user.PermissionAssignments);
+modelBuilder.ConfigureRolePermissionAudit<AppUser, Guid>(
+    user => user.AuditEventsAsActor,
+    user => user.AuditEventsAbout);
+```
+
+These relationships use separate nullable shadow foreign keys with client-side nulling. The mapping does not add database cascade actions, so it is compatible with SQL Server's cascade-path limits. Before deleting a user, load both audit collections so EF Core can clear their tracked user links while keeping the audit rows and original ID snapshots:
+
+```csharp
+var user = await dbContext.Users
+    .Include(user => user.AuditEventsAsActor)
+    .Include(user => user.AuditEventsAbout)
+    .SingleAsync(user => user.Id == userId, cancellationToken);
+
+dbContext.Users.Remove(user);
+await dbContext.SaveChangesAsync(cancellationToken);
+```
+
+If the history is too large to load for user deletion, use the ID-only audit mapping; the actor and affected-user IDs remain available as snapshots without user foreign keys. When relationship mode is enabled, supplied actor and affected-user IDs must match existing user rows.
+
+### Reading audit history
+
+The public `RolePermissionAuditEntry<TUserId>` is immutable to application code. Entries record stable action codes such as `role.created`, `permission.renamed`, `role.permission_granted`, and `user.role_assigned`, along with applicable role or permission codes, name snapshots, actor ID, affected-user ID, and UTC time.
+
+For any `TUserId`, check `HasActorUserId` and `HasAffectedUserId` before interpreting those ID properties. C# generic nullable annotations do not make a value type such as `Guid` nullable at runtime, so a missing `Guid` appears as `Guid.Empty` with its `Has...` flag set to `false`. A valid `Guid.Empty` is distinguishable because its flag is `true`.
+
+```csharp
+var history = await dbContext.Set<RolePermissionAuditEntry<Guid>>()
+    .Where(entry => entry.HasAffectedUserId && entry.AffectedUserId == userId)
+    .OrderByDescending(entry => entry.Id)
+    .ToListAsync(cancellationToken);
+```
+
+Ordering by the generated audit ID works with SQLite, whose EF provider does not support ordering by `DateTimeOffset` values. For sequential writes, these IDs provide insertion ordering; they are not timestamps.
+
+The manager queues an audit entry only when its operation changes package-managed state. The application still calls `SaveChangesAsync`; RBAC changes and audit rows persist together in the same unit of work. Direct EF changes, SQL, and user deletions performed outside the manager are not recorded.
+
 ## Check permissions
 
 Use `IPermissionChecker<TUserId>` for application level checks. A permission is effective when granted directly to the user or through any assigned role.

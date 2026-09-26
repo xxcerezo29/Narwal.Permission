@@ -10,10 +10,14 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
     where TUserId : notnull
 {
     private readonly TContext _context;
+    private readonly RolePermissionAuditWriter<TContext, TUserId> _auditWriter;
 
-    public RolePermissionManager(TContext context)
+    public RolePermissionManager(
+        TContext context,
+        RolePermissionAuditWriter<TContext, TUserId> auditWriter)
     {
         _context = context;
+        _auditWriter = auditWriter;
     }
 
     public async Task<Role> CreateRoleAsync(
@@ -29,7 +33,14 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
         }
 
         var role = new Role(normalizedCode, name);
+        var actor = _auditWriter.GetActor();
         _context.Set<Role>().Add(role);
+        _auditWriter.Add(
+            RolePermissionAuditActions.RoleCreated,
+            role.Code,
+            null,
+            actor,
+            newName: role.Name);
         return role;
     }
 
@@ -46,20 +57,57 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
         }
 
         var permission = new PermissionEntity(normalizedCode, name);
+        var actor = _auditWriter.GetActor();
         _context.Set<PermissionEntity>().Add(permission);
+        _auditWriter.Add(
+            RolePermissionAuditActions.PermissionCreated,
+            null,
+            permission.Code,
+            actor,
+            newName: permission.Name);
         return permission;
     }
 
     public async Task RenameRoleAsync(string code, string name, CancellationToken cancellationToken = default)
     {
         var role = await GetRoleAsync(code, cancellationToken);
-        role.Rename(name);
+        var newName = RolePermissionCode.NormalizeName(name);
+        if (StringComparer.Ordinal.Equals(role.Name, newName))
+        {
+            return;
+        }
+
+        var previousName = role.Name;
+        var actor = _auditWriter.GetActor();
+        role.Rename(newName);
+        _auditWriter.Add(
+            RolePermissionAuditActions.RoleRenamed,
+            role.Code,
+            null,
+            actor,
+            previousName: previousName,
+            newName: role.Name);
     }
 
     public async Task RenamePermissionAsync(string code, string name, CancellationToken cancellationToken = default)
     {
         var permission = await GetPermissionAsync(code, cancellationToken);
-        permission.Rename(name);
+        var newName = RolePermissionCode.NormalizeName(name);
+        if (StringComparer.Ordinal.Equals(permission.Name, newName))
+        {
+            return;
+        }
+
+        var previousName = permission.Name;
+        var actor = _auditWriter.GetActor();
+        permission.Rename(newName);
+        _auditWriter.Add(
+            RolePermissionAuditActions.PermissionRenamed,
+            null,
+            permission.Code,
+            actor,
+            previousName: previousName,
+            newName: permission.Name);
     }
 
     public async Task DeleteRoleAsync(string code, CancellationToken cancellationToken = default)
@@ -69,9 +117,37 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
 
         var grants = await GetRoleGrantsAsync(normalizedCode, cancellationToken);
         var assignments = await GetRoleUserAssignmentsAsync(normalizedCode, cancellationToken);
+        var actor = _auditWriter.GetActor();
         _context.Set<RolePermissionGrant>().RemoveRange(grants);
         _context.Set<UserRole<TUserId>>().RemoveRange(assignments);
         _context.Set<Role>().Remove(role);
+
+        foreach (var grant in grants)
+        {
+            _auditWriter.Add(
+                RolePermissionAuditActions.RolePermissionRevoked,
+                grant.RoleCode,
+                grant.PermissionCode,
+                actor);
+        }
+
+        foreach (var assignment in assignments)
+        {
+            _auditWriter.Add(
+                RolePermissionAuditActions.UserRoleRemoved,
+                assignment.RoleCode,
+                null,
+                actor,
+                hasAffectedUserId: true,
+                affectedUserId: assignment.UserId);
+        }
+
+        _auditWriter.Add(
+            RolePermissionAuditActions.RoleDeleted,
+            role.Code,
+            null,
+            actor,
+            previousName: role.Name);
     }
 
     public async Task DeletePermissionAsync(string code, CancellationToken cancellationToken = default)
@@ -81,9 +157,37 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
 
         var grants = await GetPermissionGrantsAsync(normalizedCode, cancellationToken);
         var assignments = await GetPermissionUserAssignmentsAsync(normalizedCode, cancellationToken);
+        var actor = _auditWriter.GetActor();
         _context.Set<RolePermissionGrant>().RemoveRange(grants);
         _context.Set<UserPermission<TUserId>>().RemoveRange(assignments);
         _context.Set<PermissionEntity>().Remove(permission);
+
+        foreach (var grant in grants)
+        {
+            _auditWriter.Add(
+                RolePermissionAuditActions.RolePermissionRevoked,
+                grant.RoleCode,
+                grant.PermissionCode,
+                actor);
+        }
+
+        foreach (var assignment in assignments)
+        {
+            _auditWriter.Add(
+                RolePermissionAuditActions.UserPermissionRevoked,
+                null,
+                assignment.PermissionCode,
+                actor,
+                hasAffectedUserId: true,
+                affectedUserId: assignment.UserId);
+        }
+
+        _auditWriter.Add(
+            RolePermissionAuditActions.PermissionDeleted,
+            null,
+            permission.Code,
+            actor,
+            previousName: permission.Name);
     }
 
     public async Task GrantPermissionToRoleAsync(
@@ -99,12 +203,23 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
             return;
         }
 
+        var actor = _auditWriter.GetActor();
         if (RestoreDeletedRoleGrant(role.Code, permission.Code))
         {
+            _auditWriter.Add(
+                RolePermissionAuditActions.RolePermissionGranted,
+                role.Code,
+                permission.Code,
+                actor);
             return;
         }
 
         _context.Set<RolePermissionGrant>().Add(new RolePermissionGrant(role.Code, permission.Code));
+        _auditWriter.Add(
+            RolePermissionAuditActions.RolePermissionGranted,
+            role.Code,
+            permission.Code,
+            actor);
     }
 
     public async Task RevokePermissionFromRoleAsync(
@@ -115,8 +230,22 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
         var role = await GetRoleAsync(roleCode, cancellationToken);
         var permission = await GetPermissionAsync(permissionCode, cancellationToken);
         var grants = await GetRoleGrantsAsync(role.Code, cancellationToken);
-        _context.Set<RolePermissionGrant>().RemoveRange(
-            grants.Where(grant => grant.PermissionCode == permission.Code));
+        var matchingGrants = grants.Where(grant => grant.PermissionCode == permission.Code).ToArray();
+        if (matchingGrants.Length == 0)
+        {
+            return;
+        }
+
+        var actor = _auditWriter.GetActor();
+        _context.Set<RolePermissionGrant>().RemoveRange(matchingGrants);
+        foreach (var grant in matchingGrants)
+        {
+            _auditWriter.Add(
+                RolePermissionAuditActions.RolePermissionRevoked,
+                grant.RoleCode,
+                grant.PermissionCode,
+                actor);
+        }
     }
 
     public async Task SyncRolePermissionsAsync(
@@ -135,17 +264,50 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
 
         var desiredCodes = permissions.Select(permission => permission.Code).ToHashSet(StringComparer.Ordinal);
         var current = await GetRoleGrantsAsync(role.Code, cancellationToken);
-        _context.Set<RolePermissionGrant>().RemoveRange(
-            current.Where(grant => !desiredCodes.Contains(grant.PermissionCode)));
-
+        var removals = current.Where(grant => !desiredCodes.Contains(grant.PermissionCode)).ToArray();
         var currentCodes = current.Select(grant => grant.PermissionCode).ToHashSet(StringComparer.Ordinal);
-        foreach (var permission in permissions)
+        var missing = permissions.Where(permission => !currentCodes.Contains(permission.Code)).ToArray();
+        var restorations = missing
+            .Where(permission => HasDeletedRoleGrant(role.Code, permission.Code))
+            .ToArray();
+        var additions = missing.Except(restorations).ToArray();
+
+        if (removals.Length == 0 && additions.Length == 0 && restorations.Length == 0)
         {
-            if (!currentCodes.Contains(permission.Code)
-                && !RestoreDeletedRoleGrant(role.Code, permission.Code))
+            return;
+        }
+
+        var actor = _auditWriter.GetActor();
+        _context.Set<RolePermissionGrant>().RemoveRange(removals);
+        foreach (var permission in restorations)
+        {
+            if (RestoreDeletedRoleGrant(role.Code, permission.Code))
             {
-                _context.Set<RolePermissionGrant>().Add(new RolePermissionGrant(role.Code, permission.Code));
+                _auditWriter.Add(
+                    RolePermissionAuditActions.RolePermissionGranted,
+                    role.Code,
+                    permission.Code,
+                    actor);
             }
+        }
+
+        foreach (var grant in removals)
+        {
+            _auditWriter.Add(
+                RolePermissionAuditActions.RolePermissionRevoked,
+                grant.RoleCode,
+                grant.PermissionCode,
+                actor);
+        }
+
+        foreach (var permission in additions)
+        {
+            _context.Set<RolePermissionGrant>().Add(new RolePermissionGrant(role.Code, permission.Code));
+            _auditWriter.Add(
+                RolePermissionAuditActions.RolePermissionGranted,
+                role.Code,
+                permission.Code,
+                actor);
         }
     }
 
@@ -162,12 +324,27 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
             return;
         }
 
+        var actor = _auditWriter.GetActor();
         if (RestoreDeletedUserRole(userId, role.Code))
         {
+            _auditWriter.Add(
+                RolePermissionAuditActions.UserRoleAssigned,
+                role.Code,
+                null,
+                actor,
+                hasAffectedUserId: true,
+                affectedUserId: userId);
             return;
         }
 
         _context.Set<UserRole<TUserId>>().Add(new UserRole<TUserId>(userId, role.Code));
+        _auditWriter.Add(
+            RolePermissionAuditActions.UserRoleAssigned,
+            role.Code,
+            null,
+            actor,
+            hasAffectedUserId: true,
+            affectedUserId: userId);
     }
 
     public async Task RemoveRoleAsync(
@@ -178,8 +355,24 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
         ThrowIfNullUserId(userId);
         var role = await GetRoleAsync(roleCode, cancellationToken);
         var assignments = await GetUserRolesAsync(userId, cancellationToken);
-        _context.Set<UserRole<TUserId>>().RemoveRange(
-            assignments.Where(assignment => assignment.RoleCode == role.Code));
+        var matchingAssignments = assignments.Where(assignment => assignment.RoleCode == role.Code).ToArray();
+        if (matchingAssignments.Length == 0)
+        {
+            return;
+        }
+
+        var actor = _auditWriter.GetActor();
+        _context.Set<UserRole<TUserId>>().RemoveRange(matchingAssignments);
+        foreach (var assignment in matchingAssignments)
+        {
+            _auditWriter.Add(
+                RolePermissionAuditActions.UserRoleRemoved,
+                assignment.RoleCode,
+                null,
+                actor,
+                hasAffectedUserId: true,
+                affectedUserId: assignment.UserId);
+        }
     }
 
     public async Task SyncUserRolesAsync(
@@ -198,17 +391,56 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
 
         var desiredCodes = roles.Select(role => role.Code).ToHashSet(StringComparer.Ordinal);
         var current = await GetUserRolesAsync(userId, cancellationToken);
-        _context.Set<UserRole<TUserId>>().RemoveRange(
-            current.Where(assignment => !desiredCodes.Contains(assignment.RoleCode)));
-
+        var removals = current.Where(assignment => !desiredCodes.Contains(assignment.RoleCode)).ToArray();
         var currentCodes = current.Select(assignment => assignment.RoleCode).ToHashSet(StringComparer.Ordinal);
-        foreach (var role in roles)
+        var missing = roles.Where(role => !currentCodes.Contains(role.Code)).ToArray();
+        var restorations = missing
+            .Where(role => HasDeletedUserRole(userId, role.Code))
+            .ToArray();
+        var additions = missing.Except(restorations).ToArray();
+
+        if (removals.Length == 0 && additions.Length == 0 && restorations.Length == 0)
         {
-            if (!currentCodes.Contains(role.Code)
-                && !RestoreDeletedUserRole(userId, role.Code))
+            return;
+        }
+
+        var actor = _auditWriter.GetActor();
+        _context.Set<UserRole<TUserId>>().RemoveRange(removals);
+        foreach (var role in restorations)
+        {
+            if (RestoreDeletedUserRole(userId, role.Code))
             {
-                _context.Set<UserRole<TUserId>>().Add(new UserRole<TUserId>(userId, role.Code));
+                _auditWriter.Add(
+                    RolePermissionAuditActions.UserRoleAssigned,
+                    role.Code,
+                    null,
+                    actor,
+                    hasAffectedUserId: true,
+                    affectedUserId: userId);
             }
+        }
+
+        foreach (var assignment in removals)
+        {
+            _auditWriter.Add(
+                RolePermissionAuditActions.UserRoleRemoved,
+                assignment.RoleCode,
+                null,
+                actor,
+                hasAffectedUserId: true,
+                affectedUserId: assignment.UserId);
+        }
+
+        foreach (var role in additions)
+        {
+            _context.Set<UserRole<TUserId>>().Add(new UserRole<TUserId>(userId, role.Code));
+            _auditWriter.Add(
+                RolePermissionAuditActions.UserRoleAssigned,
+                role.Code,
+                null,
+                actor,
+                hasAffectedUserId: true,
+                affectedUserId: userId);
         }
     }
 
@@ -225,12 +457,27 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
             return;
         }
 
+        var actor = _auditWriter.GetActor();
         if (RestoreDeletedUserPermission(userId, permission.Code))
         {
+            _auditWriter.Add(
+                RolePermissionAuditActions.UserPermissionGranted,
+                null,
+                permission.Code,
+                actor,
+                hasAffectedUserId: true,
+                affectedUserId: userId);
             return;
         }
 
         _context.Set<UserPermission<TUserId>>().Add(new UserPermission<TUserId>(userId, permission.Code));
+        _auditWriter.Add(
+            RolePermissionAuditActions.UserPermissionGranted,
+            null,
+            permission.Code,
+            actor,
+            hasAffectedUserId: true,
+            affectedUserId: userId);
     }
 
     public async Task RevokePermissionFromUserAsync(
@@ -241,8 +488,24 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
         ThrowIfNullUserId(userId);
         var permission = await GetPermissionAsync(permissionCode, cancellationToken);
         var assignments = await GetUserPermissionsAsync(userId, cancellationToken);
-        _context.Set<UserPermission<TUserId>>().RemoveRange(
-            assignments.Where(assignment => assignment.PermissionCode == permission.Code));
+        var matchingAssignments = assignments.Where(assignment => assignment.PermissionCode == permission.Code).ToArray();
+        if (matchingAssignments.Length == 0)
+        {
+            return;
+        }
+
+        var actor = _auditWriter.GetActor();
+        _context.Set<UserPermission<TUserId>>().RemoveRange(matchingAssignments);
+        foreach (var assignment in matchingAssignments)
+        {
+            _auditWriter.Add(
+                RolePermissionAuditActions.UserPermissionRevoked,
+                null,
+                assignment.PermissionCode,
+                actor,
+                hasAffectedUserId: true,
+                affectedUserId: assignment.UserId);
+        }
     }
 
     public async Task SyncUserPermissionsAsync(
@@ -261,17 +524,56 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
 
         var desiredCodes = permissions.Select(permission => permission.Code).ToHashSet(StringComparer.Ordinal);
         var current = await GetUserPermissionsAsync(userId, cancellationToken);
-        _context.Set<UserPermission<TUserId>>().RemoveRange(
-            current.Where(assignment => !desiredCodes.Contains(assignment.PermissionCode)));
-
+        var removals = current.Where(assignment => !desiredCodes.Contains(assignment.PermissionCode)).ToArray();
         var currentCodes = current.Select(assignment => assignment.PermissionCode).ToHashSet(StringComparer.Ordinal);
-        foreach (var permission in permissions)
+        var missing = permissions.Where(permission => !currentCodes.Contains(permission.Code)).ToArray();
+        var restorations = missing
+            .Where(permission => HasDeletedUserPermission(userId, permission.Code))
+            .ToArray();
+        var additions = missing.Except(restorations).ToArray();
+
+        if (removals.Length == 0 && additions.Length == 0 && restorations.Length == 0)
         {
-            if (!currentCodes.Contains(permission.Code)
-                && !RestoreDeletedUserPermission(userId, permission.Code))
+            return;
+        }
+
+        var actor = _auditWriter.GetActor();
+        _context.Set<UserPermission<TUserId>>().RemoveRange(removals);
+        foreach (var permission in restorations)
+        {
+            if (RestoreDeletedUserPermission(userId, permission.Code))
             {
-                _context.Set<UserPermission<TUserId>>().Add(new UserPermission<TUserId>(userId, permission.Code));
+                _auditWriter.Add(
+                    RolePermissionAuditActions.UserPermissionGranted,
+                    null,
+                    permission.Code,
+                    actor,
+                    hasAffectedUserId: true,
+                    affectedUserId: userId);
             }
+        }
+
+        foreach (var assignment in removals)
+        {
+            _auditWriter.Add(
+                RolePermissionAuditActions.UserPermissionRevoked,
+                null,
+                assignment.PermissionCode,
+                actor,
+                hasAffectedUserId: true,
+                affectedUserId: assignment.UserId);
+        }
+
+        foreach (var permission in additions)
+        {
+            _context.Set<UserPermission<TUserId>>().Add(new UserPermission<TUserId>(userId, permission.Code));
+            _auditWriter.Add(
+                RolePermissionAuditActions.UserPermissionGranted,
+                null,
+                permission.Code,
+                actor,
+                hasAffectedUserId: true,
+                affectedUserId: userId);
         }
     }
 
@@ -398,6 +700,14 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
         return true;
     }
 
+    private bool HasDeletedRoleGrant(string roleCode, string permissionCode)
+    {
+        return _context.ChangeTracker.Entries<RolePermissionGrant>().Any(candidate =>
+            candidate.State == EntityState.Deleted
+            && candidate.Entity.RoleCode == roleCode
+            && candidate.Entity.PermissionCode == permissionCode);
+    }
+
     private bool RestoreDeletedUserRole(TUserId userId, string roleCode)
     {
         var entry = _context.ChangeTracker.Entries<UserRole<TUserId>>().FirstOrDefault(candidate =>
@@ -413,6 +723,14 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
         return true;
     }
 
+    private bool HasDeletedUserRole(TUserId userId, string roleCode)
+    {
+        return _context.ChangeTracker.Entries<UserRole<TUserId>>().Any(candidate =>
+            candidate.State == EntityState.Deleted
+            && EqualityComparer<TUserId>.Default.Equals(candidate.Entity.UserId, userId)
+            && candidate.Entity.RoleCode == roleCode);
+    }
+
     private bool RestoreDeletedUserPermission(TUserId userId, string permissionCode)
     {
         var entry = _context.ChangeTracker.Entries<UserPermission<TUserId>>().FirstOrDefault(candidate =>
@@ -426,6 +744,14 @@ internal sealed class RolePermissionManager<TContext, TUserId> : IRolePermission
 
         entry.State = EntityState.Unchanged;
         return true;
+    }
+
+    private bool HasDeletedUserPermission(TUserId userId, string permissionCode)
+    {
+        return _context.ChangeTracker.Entries<UserPermission<TUserId>>().Any(candidate =>
+            candidate.State == EntityState.Deleted
+            && EqualityComparer<TUserId>.Default.Equals(candidate.Entity.UserId, userId)
+            && candidate.Entity.PermissionCode == permissionCode);
     }
 
     private static Expression<Func<TEntity, bool>> UserIdEquals<TEntity>(
