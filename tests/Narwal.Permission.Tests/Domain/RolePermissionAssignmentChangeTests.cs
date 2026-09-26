@@ -83,6 +83,31 @@ public sealed class RolePermissionAssignmentChangeTests
             InvokeChange(guidRoleFactory, Guid.NewGuid(), "posts.*", DateTimeOffset.UnixEpoch, false, default(Guid)));
     }
 
+    [Fact]
+    public void Factories_reject_null_assignment_codes()
+    {
+        var changeType = GetChangeType<Guid>();
+        var factoryNames = new[]
+        {
+            "UserRoleAssigned",
+            "UserRoleRemoved",
+            "UserPermissionGranted",
+            "UserPermissionRevoked"
+        };
+
+        foreach (var factoryName in factoryNames)
+        {
+            var factory = FindChangeFactory(changeType, factoryName);
+            Assert.Throws<ArgumentNullException>(() => InvokeChange(
+                factory,
+                Guid.NewGuid(),
+                null,
+                DateTimeOffset.UnixEpoch,
+                false,
+                default(Guid)));
+        }
+    }
+
     private static object InvokeChange<TUserId>(string factoryName, params object?[] arguments)
         where TUserId : notnull
     {

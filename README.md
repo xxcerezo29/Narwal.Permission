@@ -145,6 +145,15 @@ The manager never calls `SaveChangesAsync`. Save changes and transaction boundar
 
 When your user aggregate owns assignment behavior, map its private role and permission collections with the relationship overload shown above. The aggregate can create assignments through `UserRole<TUserId>.Create` and `UserPermission<TUserId>.Create`; their setters and constructors remain encapsulated. Keep pending changes in your own transient event collection:
 
+For an existing user, load the assignment collections needed by the aggregate's duplicate checks and removals, and keep the user tracked by the same scoped `DbContext` used by the recorder. For example:
+
+```csharp
+var user = await dbContext.Users
+    .Include(user => user.RoleAssignments)
+    .Include(user => user.PermissionAssignments)
+    .SingleAsync(user => user.Id == userId, cancellationToken);
+```
+
 ```csharp
 using Narwal.Permission.Domain;
 
@@ -183,7 +192,7 @@ public sealed class AppUser
 
 The aggregate owns duplicate and missing-assignment behavior. Use the matching event factories `UserRoleRemoved`, `UserPermissionGranted`, and `UserPermissionRevoked` for the other successful mutations. The event carries the affected user, normalized code, UTC-normalized occurrence time, and optional actor ID. For value-type IDs, check `HasActorUserId` to distinguish no actor from a valid `Guid.Empty`.
 
-Dispatch queued events once through the scoped recorder before saving. `AddRolePermission` registers `IRolePermissionAuditRecorder<TUserId>` automatically; the recorder adds rows to the same context and never saves. Clear the queue only after the host save succeeds, so a failed save does not discard the aggregate's pending events:
+Dispatch queued events once through the scoped recorder before saving. `AddRolePermission` registers `IRolePermissionAuditRecorder<TUserId>` automatically; the recorder adds rows to the same context and never saves. Clear the in-memory queue after all `Record` calls succeed:
 
 ```csharp
 using Narwal.Permission.Services;
@@ -199,11 +208,13 @@ public sealed class UserService(
             auditRecorder.Record(change);
         }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
         user.ClearPendingChanges();
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 }
 ```
+
+The recorder does not deduplicate events. If `SaveChangesAsync` fails after dispatch, the audit rows remain tracked as `Added`; retry `SaveChangesAsync` on that same context without dispatching the same events again. If you discard that context, your application is responsible for preserving or replaying the pending changes.
 
 Assignment audit entries are opt-in: call `ConfigureRolePermissionAudit` in `OnModelCreating` to map the audit entity/table. Without that mapping, recording is a no-op. A factory normalizes and validates code format; it does not check that a role or permission exists. Validate existence in an application service if needed, and let the configured database foreign key enforce it on save. Direct EF or SQL assignment writes that do not produce and dispatch these events are not audited. Do not also apply the same assignment through the manager, which already records its own audit event.
 

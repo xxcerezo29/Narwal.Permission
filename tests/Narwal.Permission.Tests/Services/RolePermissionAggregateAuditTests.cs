@@ -136,6 +136,58 @@ public sealed class RolePermissionAggregateAuditTests
     }
 
     [Fact]
+    public async Task Aggregate_removals_delete_assignments_and_persist_audit_rows()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var provider = CreateServices(connection);
+        await using var scope = provider.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<EventedRolePermissionDbContext>();
+        await context.Database.EnsureCreatedAsync();
+        var manager = scope.ServiceProvider.GetRequiredService<IRolePermissionManager<Guid>>();
+        var (actorId, seededUser) = await SeedAsync(context, manager);
+
+        await manager.AssignRoleAsync(seededUser.Id, "reader");
+        await manager.GrantPermissionToUserAsync(seededUser.Id, "posts.read");
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var user = await context.Users
+            .Include(candidate => candidate.RoleAssignments)
+            .Include(candidate => candidate.PermissionAssignments)
+            .SingleAsync(candidate => candidate.Id == seededUser.Id);
+        var occurredAt = new DateTimeOffset(2026, 9, 26, 16, 0, 0, TimeSpan.FromHours(-4));
+        user.RevokeRole("reader", occurredAt, actorId);
+        user.RevokePermission("posts.read", occurredAt.AddMinutes(1), actorId);
+
+        var recorder = scope.ServiceProvider.GetRequiredService<IRolePermissionAuditRecorder<Guid>>();
+        foreach (var change in user.PendingRolePermissionChanges)
+        {
+            recorder.Record(change);
+        }
+
+        user.ClearPendingRolePermissionChanges();
+        await context.SaveChangesAsync();
+
+        Assert.Equal(0, await context.Set<UserRole<Guid>>().CountAsync());
+        Assert.Equal(0, await context.Set<UserPermission<Guid>>().CountAsync());
+        var removalEntries = await context.Set<RolePermissionAuditEntry<Guid>>()
+            .Where(entry => entry.Action == "user.role_removed"
+                || entry.Action == "user.permission_revoked")
+            .ToArrayAsync();
+        Assert.Equal(2, removalEntries.Length);
+        Assert.Contains(removalEntries, entry =>
+            entry.Action == "user.role_removed" && entry.RoleCode == "reader");
+        Assert.Contains(removalEntries, entry =>
+            entry.Action == "user.permission_revoked" && entry.PermissionCode == "posts.read");
+        Assert.All(removalEntries, entry =>
+        {
+            Assert.Equal(actorId, entry.ActorUserId);
+            Assert.Equal(user.Id, entry.AffectedUserId);
+        });
+    }
+
+    [Fact]
     public async Task Saving_without_dispatch_persists_assignment_without_assignment_audit()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

@@ -52,9 +52,12 @@ public sealed class RolePermissionAssignmentChange<TUserId>
         string roleCode,
         DateTimeOffset occurredAtUtc,
         bool hasActorUserId = false,
-        TUserId? actorUserId = default) =>
-        Create(RolePermissionAuditActions.UserRoleAssigned, affectedUserId, roleCode, null,
+        TUserId? actorUserId = default)
+    {
+        ArgumentNullException.ThrowIfNull(roleCode);
+        return Create(RolePermissionAuditActions.UserRoleAssigned, affectedUserId, roleCode, null,
             occurredAtUtc, hasActorUserId, actorUserId);
+    }
 
     /// <summary>Creates an event for removing a role from a user.</summary>
     public static RolePermissionAssignmentChange<TUserId> UserRoleRemoved(
@@ -62,9 +65,12 @@ public sealed class RolePermissionAssignmentChange<TUserId>
         string roleCode,
         DateTimeOffset occurredAtUtc,
         bool hasActorUserId = false,
-        TUserId? actorUserId = default) =>
-        Create(RolePermissionAuditActions.UserRoleRemoved, affectedUserId, roleCode, null,
+        TUserId? actorUserId = default)
+    {
+        ArgumentNullException.ThrowIfNull(roleCode);
+        return Create(RolePermissionAuditActions.UserRoleRemoved, affectedUserId, roleCode, null,
             occurredAtUtc, hasActorUserId, actorUserId);
+    }
 
     /// <summary>Creates an event for granting a direct permission to a user.</summary>
     public static RolePermissionAssignmentChange<TUserId> UserPermissionGranted(
@@ -72,9 +78,12 @@ public sealed class RolePermissionAssignmentChange<TUserId>
         string permissionCode,
         DateTimeOffset occurredAtUtc,
         bool hasActorUserId = false,
-        TUserId? actorUserId = default) =>
-        Create(RolePermissionAuditActions.UserPermissionGranted, affectedUserId, null, permissionCode,
+        TUserId? actorUserId = default)
+    {
+        ArgumentNullException.ThrowIfNull(permissionCode);
+        return Create(RolePermissionAuditActions.UserPermissionGranted, affectedUserId, null, permissionCode,
             occurredAtUtc, hasActorUserId, actorUserId);
+    }
 
     /// <summary>Creates an event for revoking a direct permission from a user.</summary>
     public static RolePermissionAssignmentChange<TUserId> UserPermissionRevoked(
@@ -82,9 +91,12 @@ public sealed class RolePermissionAssignmentChange<TUserId>
         string permissionCode,
         DateTimeOffset occurredAtUtc,
         bool hasActorUserId = false,
-        TUserId? actorUserId = default) =>
-        Create(RolePermissionAuditActions.UserPermissionRevoked, affectedUserId, null, permissionCode,
+        TUserId? actorUserId = default)
+    {
+        ArgumentNullException.ThrowIfNull(permissionCode);
+        return Create(RolePermissionAuditActions.UserPermissionRevoked, affectedUserId, null, permissionCode,
             occurredAtUtc, hasActorUserId, actorUserId);
+    }
 
     private static RolePermissionAssignmentChange<TUserId> Create(
         string action,
