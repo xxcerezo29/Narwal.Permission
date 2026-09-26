@@ -20,6 +20,8 @@ public static class RolePermissionServiceCollectionExtensions
         services.TryAddScoped<IRolePermissionAuditActorProvider<TUserId>,
             NullRolePermissionAuditActorProvider<TUserId>>();
         services.AddScoped<RolePermissionAuditWriter<TContext, TUserId>>();
+        services.TryAddScoped<IRolePermissionAuditRecorder<TUserId>,
+            RolePermissionAuditRecorder<TContext, TUserId>>();
         services.AddScoped<IRolePermissionManager<TUserId>, RolePermissionManager<TContext, TUserId>>();
         services.AddScoped<IPermissionChecker<TUserId>, PermissionChecker<TContext, TUserId>>();
         if (configure is not null)

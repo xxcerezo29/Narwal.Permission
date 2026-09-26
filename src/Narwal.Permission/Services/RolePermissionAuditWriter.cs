@@ -39,7 +39,8 @@ internal sealed class RolePermissionAuditWriter<TContext, TUserId>(
         bool hasAffectedUserId = false,
         TUserId? affectedUserId = default,
         string? previousName = null,
-        string? newName = null)
+        string? newName = null,
+        DateTimeOffset? occurredAtUtc = null)
     {
         if (!IsEnabled)
         {
@@ -48,7 +49,7 @@ internal sealed class RolePermissionAuditWriter<TContext, TUserId>(
 
         var auditEntry = new RolePermissionAuditEntry<TUserId>(
             action,
-            DateTimeOffset.UtcNow,
+            occurredAtUtc ?? DateTimeOffset.UtcNow,
             actor.HasActorUserId,
             actor.ActorUserId,
             hasAffectedUserId,
