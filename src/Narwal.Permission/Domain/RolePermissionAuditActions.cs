@@ -1,6 +1,6 @@
 namespace Narwal.Permission.Domain;
 
-/// <summary>Stable action codes emitted by the role-permission manager.</summary>
+/// <summary>Stable action codes recorded for package-managed role-permission changes.</summary>
 public static class RolePermissionAuditActions
 {
     public const string RoleCreated = "role.created";

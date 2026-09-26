@@ -7,6 +7,10 @@ public sealed class UserPermission<TUserId>
     {
     }
 
+    /// <summary>Creates an encapsulated direct-permission assignment for an application-owned user aggregate.</summary>
+    public static UserPermission<TUserId> Create(TUserId userId, string permissionCode) =>
+        new(userId, permissionCode);
+
     internal UserPermission(TUserId userId, string permissionCode)
     {
         UserId = userId ?? throw new ArgumentNullException(nameof(userId));
