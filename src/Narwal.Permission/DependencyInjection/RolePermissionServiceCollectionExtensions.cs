@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Narwal.Permission.Authorization;
 using Narwal.Permission.Services;
 
@@ -16,6 +17,9 @@ public static class RolePermissionServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        services.TryAddScoped<IRolePermissionAuditActorProvider<TUserId>,
+            NullRolePermissionAuditActorProvider<TUserId>>();
+        services.AddScoped<RolePermissionAuditWriter<TContext, TUserId>>();
         services.AddScoped<IRolePermissionManager<TUserId>, RolePermissionManager<TContext, TUserId>>();
         services.AddScoped<IPermissionChecker<TUserId>, PermissionChecker<TContext, TUserId>>();
         if (configure is not null)

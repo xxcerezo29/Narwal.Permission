@@ -17,6 +17,10 @@ public static class RolePermissionModelBuilderExtensions
         tableNames ??= new RolePermissionTableNames();
         tableNames.Validate();
 
+        // User entities may expose audit collections even when this context does not opt in.
+        // Explicit audit configuration can add the entity back after the RBAC model is built.
+        modelBuilder.Ignore<RolePermissionAuditEntry<TUserId>>();
+
         modelBuilder.Entity<Role>(entity =>
         {
             entity.ToTable(tableNames.Roles);

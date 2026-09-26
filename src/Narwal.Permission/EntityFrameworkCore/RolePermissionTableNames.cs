@@ -20,6 +20,9 @@ public sealed class RolePermissionTableNames
     /// <summary>Gets or sets the user-permissions assignment table name.</summary>
     public string UserPermissions { get; init; } = "NarwalUserPermissions";
 
+    /// <summary>Gets or sets the RBAC audit history table name.</summary>
+    public string AuditEntries { get; init; } = "NarwalPermissionAuditEntries";
+
     internal void Validate()
     {
         ValidateName(Roles, nameof(Roles));
@@ -27,6 +30,7 @@ public sealed class RolePermissionTableNames
         ValidateName(RolePermissions, nameof(RolePermissions));
         ValidateName(UserRoles, nameof(UserRoles));
         ValidateName(UserPermissions, nameof(UserPermissions));
+        ValidateName(AuditEntries, nameof(AuditEntries));
     }
 
     private static void ValidateName(string? name, string propertyName)
