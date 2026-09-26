@@ -38,7 +38,7 @@ public sealed class RolePermissionAuditEntry<TUserId>
     /// <summary>Gets the stable action code for this change.</summary>
     public string Action { get; private set; } = null!;
 
-    /// <summary>Gets the UTC timestamp at which the manager recorded the change.</summary>
+    /// <summary>Gets the UTC timestamp at which the manager or application aggregate made the change.</summary>
     public DateTimeOffset OccurredAtUtc { get; private set; }
 
     /// <summary>Gets the optional user ID of the actor that initiated the change.</summary>
