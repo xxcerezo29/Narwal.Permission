@@ -115,7 +115,7 @@ For string user IDs, the default resolver reads `ClaimTypes.NameIdentifier`; no 
 
 ## Manage roles and permissions
 
-The manager owns assignment changes. Package entities do not expose public setters or public assignment constructors, so applications do not need to update join rows directly.
+Use the manager for role and permission setup, seeding, and application-service workflows. Package entities keep their constructors and setters encapsulated. When assignment changes belong inside your user aggregate, create assignment rows with the public factories and record the corresponding events as shown below.
 
 ```csharp
 using Narwal.Permission.Services;
@@ -140,6 +140,72 @@ Codes are trimmed and normalized to lowercase. They accept ASCII letters, digits
 The manager also provides `RenameRoleAsync`, `RenamePermissionAsync`, `DeleteRoleAsync`, `DeletePermissionAsync`, `RevokePermissionFromRoleAsync`, `SyncRolePermissionsAsync`, `RemoveRoleAsync`, `SyncUserRolesAsync`, `GrantPermissionToUserAsync`, `RevokePermissionFromUserAsync`, and `SyncUserPermissionsAsync`. Synchronization replaces the selected user's or role's assignments with the supplied set. Repeated grants and assignments are idempotent. Deleting a role removes its grants and user assignments but leaves permissions intact; deleting a permission removes its role and direct user grants.
 
 The manager never calls `SaveChangesAsync`. Save changes and transaction boundaries remain with the host application, so its other tracked updates can be committed together.
+
+### Assignments from a user aggregate
+
+When your user aggregate owns assignment behavior, map its private role and permission collections with the relationship overload shown above. The aggregate can create assignments through `UserRole<TUserId>.Create` and `UserPermission<TUserId>.Create`; their setters and constructors remain encapsulated. Keep pending changes in your own transient event collection:
+
+```csharp
+using Narwal.Permission.Domain;
+
+public sealed class AppUser
+{
+    private readonly List<UserRole<Guid>> _roleAssignments = [];
+    private readonly List<UserPermission<Guid>> _permissionAssignments = [];
+    private readonly List<RolePermissionAssignmentChange<Guid>> _pendingChanges = [];
+
+    private AppUser() { }
+
+    public static AppUser Create(Guid id) => new() { Id = id };
+
+    public Guid Id { get; private set; }
+    public IEnumerable<UserRole<Guid>> RoleAssignments => _roleAssignments.AsReadOnly();
+    public IEnumerable<UserPermission<Guid>> PermissionAssignments => _permissionAssignments.AsReadOnly();
+    public IReadOnlyCollection<RolePermissionAssignmentChange<Guid>> PendingChanges => _pendingChanges.AsReadOnly();
+
+    public void AssignRole(string roleCode, DateTimeOffset occurredAtUtc, Guid? actorId)
+    {
+        var code = RolePermissionCode.Normalize(roleCode);
+        if (_roleAssignments.Any(assignment => assignment.RoleCode == code))
+        {
+            throw new InvalidOperationException("User already has this role.");
+        }
+
+        var change = RolePermissionAssignmentChange<Guid>.UserRoleAssigned(
+            Id, code, occurredAtUtc, actorId.HasValue, actorId.GetValueOrDefault());
+        _roleAssignments.Add(UserRole<Guid>.Create(Id, code));
+        _pendingChanges.Add(change);
+    }
+
+    public void ClearPendingChanges() => _pendingChanges.Clear();
+}
+```
+
+The aggregate owns duplicate and missing-assignment behavior. Use the matching event factories `UserRoleRemoved`, `UserPermissionGranted`, and `UserPermissionRevoked` for the other successful mutations. The event carries the affected user, normalized code, UTC-normalized occurrence time, and optional actor ID. For value-type IDs, check `HasActorUserId` to distinguish no actor from a valid `Guid.Empty`.
+
+Dispatch queued events once through the scoped recorder before saving. `AddRolePermission` registers `IRolePermissionAuditRecorder<TUserId>` automatically; the recorder adds rows to the same context and never saves. Clear the queue only after the host save succeeds, so a failed save does not discard the aggregate's pending events:
+
+```csharp
+using Narwal.Permission.Services;
+
+public sealed class UserService(
+    AppDbContext dbContext,
+    IRolePermissionAuditRecorder<Guid> auditRecorder)
+{
+    public async Task SaveAsync(AppUser user, CancellationToken cancellationToken)
+    {
+        foreach (var change in user.PendingChanges)
+        {
+            auditRecorder.Record(change);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        user.ClearPendingChanges();
+    }
+}
+```
+
+Assignment audit entries are opt-in: call `ConfigureRolePermissionAudit` in `OnModelCreating` to map the audit entity/table. Without that mapping, recording is a no-op. A factory normalizes and validates code format; it does not check that a role or permission exists. Validate existence in an application service if needed, and let the configured database foreign key enforce it on save. Direct EF or SQL assignment writes that do not produce and dispatch these events are not audited. Do not also apply the same assignment through the manager, which already records its own audit event.
 
 ## Optional audit history
 
@@ -264,7 +330,7 @@ var history = await dbContext.Set<RolePermissionAuditEntry<Guid>>()
 
 Ordering by the generated audit ID works with SQLite, whose EF provider does not support ordering by `DateTimeOffset` values. For sequential writes, these IDs provide insertion ordering; they are not timestamps.
 
-The manager queues an audit entry only when its operation changes package-managed state. The application still calls `SaveChangesAsync`; RBAC changes and audit rows persist together in the same unit of work. Direct EF changes, SQL, and user deletions performed outside the manager are not recorded.
+Manager operations queue an audit entry when they change package-managed state. Aggregate-owned assignment changes are recorded when the application dispatches their events through `IRolePermissionAuditRecorder<TUserId>`. The application still calls `SaveChangesAsync`; assignment changes and their audit rows persist together in the same unit of work. Direct EF changes, SQL, and user deletions do not produce events and are not recorded automatically.
 
 ## Check permissions
 
