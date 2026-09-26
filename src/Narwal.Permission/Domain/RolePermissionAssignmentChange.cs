@@ -1,6 +1,9 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace Narwal.Permission.Domain;
 
 /// <summary>Describes a user role or direct-permission assignment change emitted by an application aggregate.</summary>
+[NotMapped]
 public sealed class RolePermissionAssignmentChange<TUserId>
     where TUserId : notnull
 {
